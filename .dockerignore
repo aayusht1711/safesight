@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# Python virtual environment & caches
+.venv/
+venv/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs & temporary files
+*.log
+tmp/
+temp/
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker files
+docker-compose*.yml
+Dockerfile
+.dockerignore
+run_local.bat
+run_local.sh

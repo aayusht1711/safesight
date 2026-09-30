@@ -1,0 +1,83 @@
+# ============================================================
+# SafeSight AI — Production Requirements
+# Python >= 3.10 recommended
+# ============================================================
+
+# --- Core API Framework ---
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0          # WSGI/ASGI server with websockets + http tools
+python-multipart>=0.0.9            # Required for FastAPI file upload (UploadFile)
+
+# --- Pydantic (schema + validation) ---
+pydantic>=2.6.0
+pydantic-settings>=2.3.0
+
+# --- Async HTTP client ---
+httpx>=0.27.0
+
+# --- ML / Deep Learning Core ---
+torch>=2.3.0
+torchvision>=0.18.0
+torchaudio>=2.3.0
+
+# --- Transformers & Tokenizers ---
+transformers>=4.43.0
+tokenizers>=0.19.1
+accelerate>=0.30.0
+safetensors>=0.4.3
+
+# --- 4-bit Quantization ---
+bitsandbytes>=0.43.1
+
+# --- CLIP / SigLIP Embeddings (Tier-1 fast gate) ---
+open-clip-torch>=2.24.0
+
+# --- Vision & Image Processing ---
+Pillow>=10.3.0
+opencv-python-headless>=4.9.0.80
+
+# --- Audio transcription (Whisper) ---
+openai-whisper>=20231117
+soundfile>=0.12.1
+librosa>=0.10.2
+
+# --- Video frame extraction ---
+av>=12.1.0
+
+# --- Text toxicity (DeBERTa) ---
+# Uses transformers pipeline — no extra dep needed
+
+# --- Sentence embeddings / similarity (Tier-1 text gate) ---
+sentence-transformers>=3.0.1
+
+# --- NLP utilities ---
+nltk>=3.8.1
+regex>=2024.5.15
+
+# --- Numpy / Scipy ---
+numpy>=1.26.4
+scipy>=1.13.0
+
+# --- Logging & Observability ---
+structlog>=24.2.0
+python-json-logger>=2.0.7
+
+# --- Config management ---
+python-dotenv>=1.0.1
+
+# --- Redis (async result caching) ---
+redis>=5.0.4
+aioredis>=2.0.1
+
+# --- Testing utilities ---
+requests>=2.32.3
+tabulate>=0.9.0
+colorama>=0.4.6
+rich>=13.7.0
+pytest>=8.2.0
+pytest-asyncio>=0.23.7
+
+# --- Utilities ---
+tenacity>=8.3.0
+cachetools>=5.3.3
+tqdm>=4.66.4

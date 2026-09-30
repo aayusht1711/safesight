@@ -1,0 +1,40 @@
+services:
+  # ── Ollama Local LLM / VLM Runtime ──────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: safesight-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_cache:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── SafeSight AI Moderation & Forensics Backend ─────────────────────────────
+  safesight-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: safesight-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8000
+      - DEVICE=cpu
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - VLM_MODEL_NAME=qwen2.5:3b
+    depends_on:
+      ollama:
+        condition: service_started
+
+volumes:
+  ollama_cache:
+    name: safesight_ollama_cache

@@ -1,0 +1,3 @@
+"""
+SafeSight AI — DB Package
+"""

@@ -1,0 +1,3 @@
+"""
+SafeSight AI — Models Package
+"""
