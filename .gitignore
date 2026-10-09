@@ -44,3 +44,9 @@ Thumbs.db
 
 # Uploads (temp media)
 uploads/temp/
+
+# Scratch & PDF build artifacts
+*.pdf
+test.html
+build_aegis_report_pdf.py
+

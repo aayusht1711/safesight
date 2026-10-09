@@ -270,7 +270,13 @@ class TestInMemoryCache:
         return InMemoryCache(max_entries=5)
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                return asyncio.run(coro)
+            return loop.run_until_complete(coro)
+        except RuntimeError:
+            return asyncio.run(coro)
 
     def test_miss_on_empty(self):
         cache = self._make_cache()

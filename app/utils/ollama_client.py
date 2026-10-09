@@ -135,10 +135,12 @@ class OllamaClient:
         self,
         prompt: str,
         system_prompt: str | None = None,
-        image: Image.Image | bytes | None = None,
+        image: Image.Image | bytes | list[Image.Image | bytes] | None = None,
     ) -> tuple[dict[str, Any] | None, str, bool]:
         """
         Send multimodal prompt to Ollama with retry backoff and non-crashing fallback.
+
+        Supports a single image or multiple images (e.g. original image + ELA map).
 
         Returns:
             (parsed_json_dict_or_fallback, raw_response_string, is_success)
@@ -166,16 +168,23 @@ class OllamaClient:
                     if system_prompt:
                         payload["system"] = system_prompt
 
-                    b64_image = image_to_base64(image)
-                    if b64_image:
-                        payload["images"] = [b64_image]
+                    if image is not None:
+                        if isinstance(image, list):
+                            encoded_list = [image_to_base64(img) for img in image if img is not None]
+                            payload["images"] = [b for b in encoded_list if b is not None]
+                        else:
+                            b64_image = image_to_base64(image)
+                            if b64_image:
+                                payload["images"] = [b64_image]
 
+                    has_images = bool(payload.get("images"))
                     logger.info(
                         "Dispatching multimodal inference to Ollama",
                         endpoint=endpoint,
                         model=resolved_model,
                         attempt=attempt,
-                        has_image=bool(b64_image),
+                        has_image=has_images,
+                        num_images=len(payload.get("images", [])),
                     )
 
                     resp = await client.post(endpoint, json=payload)
