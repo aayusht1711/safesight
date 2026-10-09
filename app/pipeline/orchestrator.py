@@ -335,6 +335,7 @@ async def run_moderation_pipeline(
 
     # ── Routing decision ───────────────────────────────────────────────────────
     tier_used = PipelineTier.TIER1
+    tier2_auth_report = None
 
     if tier1_result.routed_to_tier2:
         # ── Tier-2 VLM Analysis ────────────────────────────────────────────────
@@ -344,6 +345,8 @@ async def run_moderation_pipeline(
             image=primary_image,
             registry=registry,
         )
+        if _tier2_meta and getattr(_tier2_meta, "authenticity_report", None) is not None:
+            tier2_auth_report = _tier2_meta.authenticity_report
     else:
         # Short-circuit: build result from Tier-1 score alone
         decision, confidence, violations, reasoning = _build_tier1_result(
@@ -352,12 +355,13 @@ async def run_moderation_pipeline(
 
     # ── Await concurrent forensics analysis ────────────────────────────────────
     forensics_report = await forensics_task
-    authenticity_report = forensics_report.to_schema()
+    authenticity_report = tier2_auth_report or forensics_report.to_schema()
 
-    # If malicious tampering detected (e.g. face-swap, ELA anomaly), escalate if safe
-    if str(authenticity_report.verdict) == "MALICIOUS_TAMPERING":
+    # If malicious tampering or synthetic generation detected, escalate if needed
+    verdict_str = str(authenticity_report.verdict)
+    if verdict_str in ("MALICIOUS_TAMPERING", "SYNTHETIC_GENERATED") and authenticity_report.ai_involvement_percentage >= 50.0:
         if decision == ModerationDecision.APPROVED:
-            decision = ModerationDecision.FLAGGED
+            decision = ModerationDecision.FLAGGED if authenticity_report.ai_involvement_percentage >= 80.0 else ModerationDecision.HUMAN_AUDIT_REQUIRED
             confidence = max(confidence, 0.88)
         if not any(v.category == ViolationCategory.DEEPFAKE for v in violations):
             violations.append(

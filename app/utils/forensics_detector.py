@@ -301,14 +301,37 @@ def _ela_sync(image_bytes: bytes) -> ForensicsResult:
             ))
             conf = min(0.90, 0.70 + ((60.0 - variance) / 60.0) * 0.20)
 
-        elif variance > _ELA_VARIANCE_SYNTH_THRESHOLD and hf_ratio > 0.08:
-            verdict = AuthenticityVerdict.BENIGN_AI_ASSISTED
-            ai_pct = 25.0
-            conf = 0.72
         else:
-            verdict = AuthenticityVerdict.AUTHENTIC
-            ai_pct = 0.0
-            conf = 0.85
+            try:
+                from app.utils.ela_detector import perform_error_level_analysis
+                advanced_ela = perform_error_level_analysis(image_bytes, quality=95)
+                if advanced_ela.is_synthetic_suspicious or advanced_ela.text_vs_background_discrepancy > 1.20:
+                    verdict = AuthenticityVerdict.SYNTHETIC_GENERATED
+                    ai_pct = min(99.0, max(85.0, 85.0 + (advanced_ela.text_vs_background_discrepancy - 1.20) * 12.0))
+                    annotations.append(TamperAnnotation(
+                        tamper_type=TamperType.FREQUENCY_DIFFUSION_ARTIFACT,
+                        location="global",
+                        severity=0.88,
+                        description=advanced_ela.summary_description,
+                    ))
+                    conf = 0.88
+                elif variance > _ELA_VARIANCE_SYNTH_THRESHOLD and hf_ratio > 0.08:
+                    verdict = AuthenticityVerdict.BENIGN_AI_ASSISTED
+                    ai_pct = 25.0
+                    conf = 0.72
+                else:
+                    verdict = AuthenticityVerdict.AUTHENTIC
+                    ai_pct = 0.0
+                    conf = 0.85
+            except Exception:
+                if variance > _ELA_VARIANCE_SYNTH_THRESHOLD and hf_ratio > 0.08:
+                    verdict = AuthenticityVerdict.BENIGN_AI_ASSISTED
+                    ai_pct = 25.0
+                    conf = 0.72
+                else:
+                    verdict = AuthenticityVerdict.AUTHENTIC
+                    ai_pct = 0.0
+                    conf = 0.85
 
         latency_ms = (time.perf_counter() - t0) * 1000
         return ForensicsResult(

@@ -131,6 +131,7 @@ class Tier2Result(BaseModel):
     raw_vlm_output: str
     vlm_latency_ms: float
     parsed_successfully: bool
+    authenticity_report: AuthenticityReportSchema | None = None
 
 
 class AuthenticityVerdict(str, Enum):

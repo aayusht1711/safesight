@@ -340,7 +340,7 @@ def evaluate_media_file(
                         endpoint,
                         data=form_data,
                         files=files,
-                        timeout=90.0,
+                        timeout=180.0,
                     )
                     if resp.status_code == 200:
                         result_data = resp.json()

@@ -515,7 +515,7 @@ def _execute_api_request(
 
         t0 = time.perf_counter()
         try:
-            response = http_client.post(url, data=form_data, files=files if files else None, timeout=90.0)
+            response = http_client.post(url, data=form_data, files=files if files else None, timeout=180.0)
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
             if response.status_code == 200:

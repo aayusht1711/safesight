@@ -348,14 +348,31 @@ async def run_tier2_vlm(
     use_ollama = bool(settings.ollama_base_url) or (registry.vlm_model is None)
 
     if use_ollama:
-        from app.utils.ollama_client import get_ollama_client
-        ollama_client = get_ollama_client()
-        user_prompt = _build_user_prompt(text, image is not None)
-        _parsed, raw_output, _ = await ollama_client.generate_multimodal(
-            prompt=user_prompt,
-            system_prompt=_SYSTEM_PROMPT,
-            image=image,
-        )
+        if image is not None:
+            from app.pipeline.hierarchical import run_hierarchical_contextual_forensics
+            outcome = await run_hierarchical_contextual_forensics(
+                image=image,
+                text=text,
+                registry=registry,
+            )
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            s2 = outcome.stage2
+            tier2_meta = Tier2Result(
+                raw_vlm_output=s2.explanation,
+                vlm_latency_ms=round(elapsed_ms, 2),
+                parsed_successfully=True,
+                authenticity_report=outcome.moderation_result.authenticity_report,
+            )
+            return s2.decision, s2.confidence_score, s2.detected_violations, s2.reasoning, tier2_meta
+        else:
+            from app.utils.ollama_client import get_ollama_client
+            ollama_client = get_ollama_client()
+            user_prompt = _build_user_prompt(text, False)
+            _parsed, raw_output, _ = await ollama_client.generate_multimodal(
+                prompt=user_prompt,
+                system_prompt=_SYSTEM_PROMPT,
+                image=None,
+            )
     else:
         try:
             raw_output = await asyncio.wait_for(
