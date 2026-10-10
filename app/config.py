@@ -103,6 +103,7 @@ from app.schemas import (
     AuthenticityReport,
     AuthenticityReportSchema,
     DetectedTamperedRegion,
+    TamperedRegionCategory,
     ModerationResponse,
     ModerationResult,
 )
@@ -111,6 +112,7 @@ __all__ = [
     "Settings",
     "get_settings",
     "DetectedTamperedRegion",
+    "TamperedRegionCategory",
     "AuthenticityReport",
     "AuthenticityReportSchema",
     "ModerationResponse",

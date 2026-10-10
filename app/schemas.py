@@ -142,14 +142,28 @@ class AuthenticityVerdict(str, Enum):
     SYNTHETIC_GENERATED = "SYNTHETIC_GENERATED"
 
 
+class TamperedRegionCategory(str, Enum):
+    """Categorical classification of detected media tampering."""
+    INPAINTING = "INPAINTING"
+    GENERATIVE_OBJECT = "GENERATIVE_OBJECT"
+    SYNTHETIC_TEXT = "SYNTHETIC_TEXT"
+    FACE_SWAP = "FACE_SWAP"
+    COMPRESSION_ARTIFACT = "COMPRESSION_ARTIFACT"
+
+
 class DetectedTamperedRegion(BaseModel):
     """
     Normalized 2D bounding box representing localized media tampering,
-    inpainting, synthetic text, deepfake faces, or generative artifacts.
+    inpainting, synthetic text, deepfake faces, or generative artifacts,
+    with human-interpretable semantic labeling and forensic explanation.
     """
     region_label: str = Field(
         ...,
-        description="Category of detected tampering, e.g., 'synthetic_text', 'inpainting', 'deepfake_face', 'adversarial_artifact'.",
+        description="A concise, plain-English label describing the exact object (e.g., 'AI Inpainted Birds', 'Synthetic Text Block', 'Cloned Object').",
+    )
+    category: TamperedRegionCategory = Field(
+        default=TamperedRegionCategory.INPAINTING,
+        description="Category of detected tampering: INPAINTING | GENERATIVE_OBJECT | SYNTHETIC_TEXT | FACE_SWAP | COMPRESSION_ARTIFACT",
     )
     confidence: float = Field(
         ...,
@@ -161,10 +175,47 @@ class DetectedTamperedRegion(BaseModel):
         ...,
         description="Normalized coordinates [ymin, xmin, ymax, xmax] scaled from 0 to 1000.",
     )
-    forensic_reasoning: str = Field(
-        ...,
-        description="Forensic rationale detailing the visual or compression anomalies within this box.",
+    forensic_explanation: str = Field(
+        default="",
+        description="A concise 1-sentence explanation of why this region was flagged.",
     )
+    forensic_reasoning: str = Field(
+        default="",
+        description="Legacy alias for forensic_explanation.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_reasoning_and_explanation(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            reasoning = data.get("forensic_reasoning")
+            explanation = data.get("forensic_explanation")
+            if reasoning and not explanation:
+                data["forensic_explanation"] = reasoning
+            elif explanation and not reasoning:
+                data["forensic_reasoning"] = explanation
+            elif not reasoning and not explanation:
+                data["forensic_explanation"] = "Localized anomaly detected."
+                data["forensic_reasoning"] = "Localized anomaly detected."
+
+            cat_val = data.get("category")
+            if not cat_val:
+                lbl = str(data.get("region_label", "")).lower()
+                if "text" in lbl or "font" in lbl or "handwriting" in lbl:
+                    data["category"] = TamperedRegionCategory.SYNTHETIC_TEXT
+                elif "face" in lbl or "deepfake" in lbl or "swap" in lbl:
+                    data["category"] = TamperedRegionCategory.FACE_SWAP
+                elif "bird" in lbl or "object" in lbl or "clone" in lbl or "generative" in lbl:
+                    data["category"] = TamperedRegionCategory.GENERATIVE_OBJECT
+                elif "compress" in lbl or "dct" in lbl or "block" in lbl:
+                    data["category"] = TamperedRegionCategory.COMPRESSION_ARTIFACT
+                else:
+                    data["category"] = TamperedRegionCategory.INPAINTING
+            elif isinstance(cat_val, str) and not isinstance(cat_val, TamperedRegionCategory):
+                cat_upper = cat_val.upper().replace(" ", "_")
+                if hasattr(TamperedRegionCategory, cat_upper):
+                    data["category"] = TamperedRegionCategory[cat_upper]
+        return data
 
 
 class AuthenticityReportSchema(BaseModel):

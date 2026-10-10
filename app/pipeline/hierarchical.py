@@ -132,14 +132,16 @@ If the text is synthetic, there is a high probability the entire scene is a rend
    - Rate 'ai_involvement_percentage' between 85.0% and 100.0% if the focal scene is an AI generation.
    - For authentic social media compressed images with NO splicing, 'ai_involvement_percentage' must be 0.0%.
 
-4. LOCALIZED TAMPERING & BOUNDING BOX GROUNDING:
-   - When analyzing media authenticity, identify any localized regions containing synthetic elements, inpainting, or AI-rendered text/faces.
-   - Return exact bounding box coordinates using normalized [ymin, xmin, ymax, xmax] coordinates from 0 to 1000.
-   - For every localized anomaly, provide:
-       * "region_label": "synthetic_text" | "inpainting" | "deepfake_face" | "adversarial_artifact"
-       * "confidence": float between 0.0 and 1.0
-       * "box_2d": [ymin, xmin, ymax, xmax] (normalized coordinates from 0 to 1000)
-       * "forensic_reasoning": specific observations explaining the manipulation
+4. LOCALIZED TAMPERING & DESCRIPTIVE SEMANTIC GROUNDING:
+   When inspecting images for manipulation or synthetic generation:
+   1. Identify any localized region containing AI inpainting, pasted generative objects, or synthetic artifacts.
+   2. For each detected region, assign:
+      - 'box_2d': Normalized coordinates [ymin, xmin, ymax, xmax] (0-1000).
+      - 'region_label': A concise, plain-English label describing the EXACT object (e.g., 'AI-Inpainted Birds in Sky', 'Synthetic Handwritten Notes', 'Deepfake Face Blend').
+      - 'category': One of 'INPAINTING', 'GENERATIVE_OBJECT', 'SYNTHETIC_TEXT', 'FACE_SWAP', 'COMPRESSION_ARTIFACT'.
+      - 'confidence': float between 0.0 and 1.0.
+      - 'forensic_explanation': Explain the visual or mathematical clue (e.g., 'Diffusion edge feathering inconsistent with natural sky background', 'Identical stroke pressure and kerning').
+   Do NOT emit anonymous or generic labels like 'region_1' or 'anomaly'.
 
 ### OUTPUT FORMAT:
 Output ONLY a strictly valid JSON object:
@@ -152,10 +154,11 @@ Output ONLY a strictly valid JSON object:
   "explanation": "Final comprehensive forensic synthesis connecting Stage 1 text analysis, background physics, compression fingerprint, and Differential ELA signals.",
   "tampered_regions": [
     {{
-      "region_label": "synthetic_text" | "inpainting" | "deepfake_face" | "adversarial_artifact",
+      "region_label": "AI-Inpainted Birds in Sky",
+      "category": "INPAINTING",
       "confidence": <float 0.0 to 1.0>,
       "box_2d": [<ymin 0-1000>, <xmin 0-1000>, <ymax 0-1000>, <xmax 0-1000>],
-      "forensic_reasoning": "Forensic rationale detailing anomalies within this region."
+      "forensic_explanation": "Diffusion edge feathering inconsistent with natural sky background."
     }}
   ],
   "detected_violations": [
@@ -409,12 +412,17 @@ async def run_stage2_contextual_evaluation(
                 if isinstance(box, list) and len(box) == 4:
                     box_norm = [max(0, min(1000, int(c))) for c in box]
                     if box_norm[2] > box_norm[0] and box_norm[3] > box_norm[1]:
+                        r_lbl = str(r.get("region_label") or r.get("label", "synthetic_element"))
+                        r_cat = r.get("category", "INPAINTING")
+                        r_expl = str(r.get("forensic_explanation") or r.get("forensic_reasoning", "Localized anomaly detected."))
                         tampered_regions.append(
                             DetectedTamperedRegion(
-                                region_label=str(r.get("region_label", "synthetic_element")),
+                                region_label=r_lbl,
+                                category=r_cat,
                                 confidence=max(0.0, min(1.0, float(r.get("confidence", 0.90)))),
                                 box_2d=box_norm,
-                                forensic_reasoning=str(r.get("forensic_reasoning", "Localized anomaly detected.")),
+                                forensic_explanation=r_expl,
+                                forensic_reasoning=r_expl,
                             )
                         )
             except Exception:

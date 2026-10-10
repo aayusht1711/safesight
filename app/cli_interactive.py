@@ -332,6 +332,34 @@ def display_multimodal_forensics_card(
     console.print(summary_table)
 
     if modality == "IMAGE" and items:
+        # Anomaly Breakdown Panel
+        breakdown_text = Text()
+        for idx, r in enumerate(items, 1):
+            lbl = r.get("region_label") or r.get("label", "Tampered Region")
+            clean_lbl = str(lbl).replace("_", " ").title() if "_" in str(lbl) else str(lbl)
+            r_conf = float(r.get("confidence", 0.0))
+            reason = r.get("forensic_explanation") or r.get("forensic_reasoning", "Localized anomaly.")
+            cat = r.get("category", "")
+            cat_str = f" [{cat}]" if cat else ""
+
+            breakdown_text.append(f"• Region {idx}: ", style="bold cyan")
+            breakdown_text.append(f"{clean_lbl}", style="bold yellow")
+            breakdown_text.append(f"{cat_str}  ·  Confidence: ", style="dim")
+            breakdown_text.append(f"{r_conf * 100:.1f}%\n", style="bold red" if r_conf > 0.85 else "bold yellow")
+            breakdown_text.append("  Reason: ", style="bold white")
+            breakdown_text.append(f"{reason}\n", style="italic white")
+            if idx < len(items):
+                breakdown_text.append("\n")
+
+        breakdown_panel = Panel(
+            breakdown_text,
+            title="[bold yellow]🔍  Anomaly Breakdown[/bold yellow]",
+            border_style="yellow",
+            box=box.ROUNDED,
+            padding=(1, 2),
+        )
+        console.print(breakdown_panel)
+
         coord_table = Table(
             title="[bold red]🎯  Localized Tampering Coordinates[/bold red]",
             box=box.ROUNDED,
@@ -346,12 +374,13 @@ def display_multimodal_forensics_card(
         coord_table.add_column("Anomaly Details", style="white")
 
         for r in items:
-            lbl = r.get("label") or r.get("region_label", "tampered_region")
+            lbl = r.get("region_label") or r.get("label", "tampered_region")
+            clean_lbl = str(lbl).replace("_", " ").title() if "_" in str(lbl) else str(lbl)
             r_conf = float(r.get("confidence", 0.0))
             box_2d = r.get("box_2d", [0, 0, 0, 0])
-            reason = r.get("forensic_reasoning", "Localized anomaly.")
+            reason = r.get("forensic_explanation") or r.get("forensic_reasoning", "Localized anomaly.")
             coord_table.add_row(
-                str(lbl),
+                str(clean_lbl),
                 f"{r_conf * 100:.1f}%",
                 f"[{box_2d[0]}, {box_2d[1]}, {box_2d[2]}, {box_2d[3]}]",
                 str(reason),
@@ -424,6 +453,7 @@ def display_multimodal_forensics_card(
 
     if evidence_path:
         ev_p = Path(evidence_path).resolve()
+        console.print(f"[bold cyan]🖼️ Visual Proof Generated:[/bold cyan] [bold green]{ev_p}[/bold green]")
         console.print(
             Padding(
                 Text.assemble(

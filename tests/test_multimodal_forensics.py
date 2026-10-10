@@ -43,9 +43,19 @@ from app.pipeline import (
     run_multimodal_forensics,
     detect_media_modality,
 )
+from app.schemas import (
+    DetectedTamperedRegion,
+    TamperedRegionCategory,
+)
 from app.utils.compression_fingerprint import (
     get_image_fingerprint,
     WHATSAPP_Q75_LUMINANCE,
+)
+from app.utils.visualizer import (
+    render_annotated_tampering_image,
+    COLOR_RED,
+    COLOR_AMBER,
+    COLOR_BADGE_BG,
 )
 
 
@@ -260,3 +270,102 @@ class TestMultimodalRouter:
         assert detect_media_modality("recording.wav") == "AUDIO"
         assert detect_media_modality("clip.mp4") == "VIDEO"
         assert detect_media_modality("stream.webm") == "VIDEO"
+
+
+class TestSemanticGroundingAndVisualizerSuite:
+    """Tests for descriptive anomaly labeling, schema, and visual badge overlay engine."""
+
+    def test_tampered_region_category_enum(self):
+        assert TamperedRegionCategory.INPAINTING.value == "INPAINTING"
+        assert TamperedRegionCategory.GENERATIVE_OBJECT.value == "GENERATIVE_OBJECT"
+        assert TamperedRegionCategory.SYNTHETIC_TEXT.value == "SYNTHETIC_TEXT"
+        assert TamperedRegionCategory.FACE_SWAP.value == "FACE_SWAP"
+        assert TamperedRegionCategory.COMPRESSION_ARTIFACT.value == "COMPRESSION_ARTIFACT"
+
+    def test_detected_tampered_region_model_validation(self):
+        # Case 1: Full specification
+        r = DetectedTamperedRegion(
+            region_label="AI Inpainted Birds",
+            category=TamperedRegionCategory.GENERATIVE_OBJECT,
+            confidence=0.96,
+            box_2d=[180, 310, 340, 620],
+            forensic_explanation="Feathering inconsistent with sky background.",
+        )
+        assert r.region_label == "AI Inpainted Birds"
+        assert r.category == TamperedRegionCategory.GENERATIVE_OBJECT
+        assert r.confidence == 0.96
+        assert r.box_2d == [180, 310, 340, 620]
+        assert r.forensic_explanation == "Feathering inconsistent with sky background."
+        assert r.forensic_reasoning == "Feathering inconsistent with sky background."
+
+        # Case 2: Legacy compatibility with forensic_reasoning
+        r_legacy = DetectedTamperedRegion(
+            region_label="Synthetic Text Block",
+            confidence=0.88,
+            box_2d=[50, 50, 200, 400],
+            forensic_reasoning="Uniform glyph alignment without human pressure variance.",
+        )
+        assert r_legacy.category == TamperedRegionCategory.SYNTHETIC_TEXT
+        assert r_legacy.forensic_explanation == "Uniform glyph alignment without human pressure variance."
+        assert r_legacy.forensic_reasoning == "Uniform glyph alignment without human pressure variance."
+
+    def test_render_annotated_tampering_image_badges(self, tmp_path: Path):
+        # Create base test image
+        base_img = Image.new("RGB", (600, 600), color=(180, 200, 220))
+        target_path = tmp_path / "annotated_sample.png"
+
+        regions = [
+            DetectedTamperedRegion(
+                region_label="AI Inpainted Birds",
+                category=TamperedRegionCategory.GENERATIVE_OBJECT,
+                confidence=0.96,
+                box_2d=[180, 310, 340, 620],
+                forensic_explanation="Diffusion edge feathering inconsistent with natural sky background.",
+            ),
+            DetectedTamperedRegion(
+                region_label="Synthetic Handwritten Notes",
+                category=TamperedRegionCategory.SYNTHETIC_TEXT,
+                confidence=0.80,
+                box_2d=[50, 50, 150, 250],
+                forensic_explanation="Micro-kerning unnatural.",
+            ),
+        ]
+
+        saved_path = render_annotated_tampering_image(
+            image_input=base_img,
+            tampered_regions=regions,
+            output_path=target_path,
+        )
+
+        assert saved_path.exists()
+        assert saved_path.suffix.lower() == ".png"
+
+        # Verify output image can be loaded and has valid dimensions
+        annotated_img = Image.open(saved_path)
+        assert annotated_img.size == (600, 600)
+
+    def test_cli_anomaly_breakdown_display(self):
+        from app.cli_interactive import display_multimodal_forensics_card
+
+        mock_forensics = {
+            "modality": "IMAGE",
+            "verdict": "PARTIALLY_SYNTHETIC",
+            "ai_component": "AI Inpainted Birds",
+            "ai_percentage": 14.5,
+            "confidence": 0.96,
+            "forensic_explanation": "Localized inpainting detected in sky region.",
+            "evidence_file_path": "static/reports/annotated_birds.png",
+            "coordinates_or_timestamps": [
+                {
+                    "region_label": "AI Inpainted Birds",
+                    "category": "INPAINTING",
+                    "confidence": 0.96,
+                    "box_2d": [180, 310, 340, 620],
+                    "forensic_explanation": "Diffusion edge feathering inconsistent with natural sky background.",
+                }
+            ],
+        }
+
+        # Should render without throwing any exceptions
+        display_multimodal_forensics_card(mock_forensics, Path("birds.jpg"))
+

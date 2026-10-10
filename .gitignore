@@ -53,5 +53,6 @@ build_aegis_report_pdf.py
 # Static reports & generated images
 static/reports/*.png
 static/reports/*.jpg
+static/reports/*.jpeg
 !static/reports/.gitkeep
 

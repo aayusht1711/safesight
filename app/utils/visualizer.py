@@ -2,17 +2,19 @@
 SafeSight AI — Visual Forensics Bounding Box Overlay Utility
 ============================================================
 Draws precision bounding-box overlays, tactical corner brackets, and
-confidence badge pills onto media images to visually highlight localized
-AI-generated regions, inpainting, and synthetic manipulations.
+human-interpretable semantic badge tabs onto media images to visually highlight
+localized AI-generated regions, inpainting, and synthetic manipulations.
 
 Features:
   - Supports PIL Images, file paths, and raw image inputs
   - High-visibility color-coding:
-      * Red (#FF3B30)   -> AI-generated media, deepfake faces, synthetic text
-      * Amber (#FFCC00) -> Inpainting, localized edits, lower confidence tampering
-  - Clean badge pills with region label and calibrated confidence percentage
+      * Red (#FF3333)   -> High-confidence tampering (> 0.85)
+      * Amber (#FFAA00) -> Medium-confidence tampering (<= 0.85)
+  - Solid badge tab directly above the box:
+      "[region_label] | [confidence%]" (e.g., "AI Inpainted Birds | 96%")
+  - Dark background fill with crisp white text for maximum contrast against any image
   - Automatic directory creation under 'static/reports/annotated_<filename>.png'
-  - Return resolved filesystem Path for CLI and API consumers
+  - Returns resolved filesystem Path for CLI and API consumers
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from __future__ import annotations
 import io
 import time
 from pathlib import Path
-from typing import Union
+from typing import Any, Union
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -33,10 +35,10 @@ logger = get_logger("visualizer")
 DEFAULT_REPORTS_DIR = Path("static/reports")
 
 # Color palette (RGB)
-COLOR_RED = (255, 59, 48)       # High-severity synthetic / deepfake
-COLOR_AMBER = (255, 204, 0)     # Partial edit / inpainting
-COLOR_TEXT_LIGHT = (255, 255, 255)
-COLOR_TEXT_DARK = (20, 20, 20)
+COLOR_RED = (255, 51, 51)         # Red '#FF3333' for high confidence > 0.85
+COLOR_AMBER = (255, 170, 0)       # Amber '#FFAA00' for medium confidence <= 0.85
+COLOR_BADGE_BG = (20, 22, 28)     # Dark background fill for high contrast
+COLOR_TEXT_WHITE = (255, 255, 255) # White text
 
 
 def _get_font(size: int = 14) -> ImageFont.ImageFont:
@@ -58,18 +60,19 @@ def _get_font(size: int = 14) -> ImageFont.ImageFont:
 
 def render_annotated_tampering_image(
     image_input: Union[Path, str, Image.Image],
-    tampered_regions: list[DetectedTamperedRegion],
+    tampered_regions: list[Union[DetectedTamperedRegion, dict[str, Any]]],
     output_path: Path | str | None = None,
-    box_width: int = 4,
+    box_width: int = 3,
 ) -> Path:
     """
-    Render bounding boxes and label badges onto the image for all detected tampered regions.
+    Render bounding boxes and human-interpretable label badge tabs onto the image
+    for all detected tampered regions.
 
     Args:
         image_input: Path to original image or PIL Image object.
-        tampered_regions: List of DetectedTamperedRegion objects with box_2d in [ymin, xmin, ymax, xmax] 0-1000 scale.
+        tampered_regions: List of DetectedTamperedRegion objects or dicts with box_2d in [ymin, xmin, ymax, xmax] 0-1000 scale.
         output_path: Target save path. If None, saves to 'static/reports/annotated_<filename>.png'.
-        box_width: Thickness of bounding box borders.
+        box_width: Thickness of bounding box borders (default: 3px).
 
     Returns:
         Resolved Path to the saved annotated image.
@@ -78,19 +81,19 @@ def render_annotated_tampering_image(
     if isinstance(image_input, (str, Path)):
         src_path = Path(image_input)
         img = Image.open(src_path).convert("RGB")
-        base_name = src_path.name
+        base_name = src_path.stem
     elif isinstance(image_input, Image.Image):
         img = image_input.convert("RGB")
-        base_name = f"scan_{int(time.time() * 1000)}.png"
+        base_name = f"scan_{int(time.time() * 1000)}"
     else:
         raise ValueError(f"Unsupported image_input type: {type(image_input)}")
 
     w, h = img.size
 
-    # 2. Determine target output path
+    # 2. Determine target output path (ensuring .png extension)
     if output_path is None:
         clean_name = base_name if not base_name.startswith("annotated_") else base_name[10:]
-        out_file = DEFAULT_REPORTS_DIR / f"annotated_{clean_name}"
+        out_file = DEFAULT_REPORTS_DIR / f"annotated_{clean_name}.png"
     else:
         out_file = Path(output_path)
 
@@ -107,12 +110,23 @@ def render_annotated_tampering_image(
     draw_overlay = ImageDraw.Draw(overlay)
     draw_base = ImageDraw.Draw(img)
 
-    font_size = max(12, int(min(w, h) * 0.022))
+    font_size = max(13, int(min(w, h) * 0.026))
     font = _get_font(font_size)
 
     # 4. Iterate and render each region
-    for region in tampered_regions:
-        box = region.box_2d
+    for r_entry in tampered_regions:
+        # Normalize to DetectedTamperedRegion or extract fields
+        if isinstance(r_entry, DetectedTamperedRegion):
+            box = r_entry.box_2d
+            raw_label = r_entry.region_label
+            conf_val = float(r_entry.confidence)
+        elif isinstance(r_entry, dict):
+            box = r_entry.get("box_2d", [])
+            raw_label = r_entry.get("region_label") or r_entry.get("label", "AI-Inpainted Region")
+            conf_val = float(r_entry.get("confidence", 0.90))
+        else:
+            continue
+
         if not box or len(box) != 4:
             continue
 
@@ -130,21 +144,15 @@ def render_annotated_tampering_image(
         if y2 <= y1:
             y2 = min(h, y1 + 20)
 
-        # Select color based on category and severity
-        label_lower = region.region_label.lower()
-        is_high_risk = (
-            "synthetic" in label_lower
-            or "deepfake" in label_lower
-            or "adversarial" in label_lower
-            or region.confidence >= 0.85
-        )
-        box_rgb = COLOR_RED if is_high_risk else COLOR_AMBER
+        # Color-coding: Red '#FF3333' for high confidence > 0.85, Amber '#FFAA00' for medium confidence
+        is_high_conf = conf_val > 0.85
+        box_rgb = COLOR_RED if is_high_conf else COLOR_AMBER
         tint_rgba = (*box_rgb, 35)  # 14% translucent fill tint
 
         # Draw translucent interior tint
         draw_overlay.rectangle([x1, y1, x2, y2], fill=tint_rgba)
 
-        # Draw outer bounding box border
+        # Draw bold border (2-3px) around box_2d
         for offset in range(box_width):
             draw_base.rectangle(
                 [x1 - offset, y1 - offset, x2 + offset, y2 + offset],
@@ -153,7 +161,7 @@ def render_annotated_tampering_image(
 
         # Draw tactical corner brackets
         corner_len = max(10, int(min(x2 - x1, y2 - y1) * 0.18))
-        corner_w = box_width + 2
+        corner_w = box_width + 1
         # Top-left corner
         draw_base.line([(x1, y1), (x1 + corner_len, y1)], fill=box_rgb, width=corner_w)
         draw_base.line([(x1, y1), (x1, y1 + corner_len)], fill=box_rgb, width=corner_w)
@@ -167,8 +175,13 @@ def render_annotated_tampering_image(
         draw_base.line([(x2, y2), (x2 - corner_len, y2)], fill=box_rgb, width=corner_w)
         draw_base.line([(x2, y2), (x2, y2 - corner_len)], fill=box_rgb, width=corner_w)
 
-        # Prepare badge text
-        badge_text = f"{region.region_label.replace('_', ' ').upper()} · {int(region.confidence * 100)}%"
+        # Prepare human-readable badge text: "[region_label] | [confidence%]"
+        clean_label = raw_label.replace("_", " ").strip()
+        # Title case if all lowercase
+        if clean_label.islower():
+            clean_label = clean_label.title()
+
+        badge_text = f"{clean_label} | {int(round(conf_val * 100))}%"
 
         # Measure text size
         try:
@@ -179,30 +192,32 @@ def render_annotated_tampering_image(
             text_w = len(badge_text) * (font_size // 2)
             text_h = font_size
 
-        pad_x, pad_y = 6, 4
+        pad_x, pad_y = 8, 4
         badge_w = text_w + (pad_x * 2)
         badge_h = text_h + (pad_y * 2)
 
-        # Determine badge placement (above box if space permits, else inside top)
+        # Position solid badge tab directly above the box
         if y1 - badge_h - 4 >= 0:
             badge_y1 = y1 - badge_h - 2
             badge_y2 = y1 - 2
         else:
+            # Place inside top if near image edge
             badge_y1 = y1 + 2
             badge_y2 = y1 + badge_h + 2
 
-        badge_x1 = max(0, min(w - badge_w, x1))
+        badge_x1 = max(0, min(w - badge_w - 4, x1))
         badge_x2 = badge_x1 + badge_w
 
-        # Draw badge background pill
-        draw_base.rectangle([badge_x1, badge_y1, badge_x2, badge_y2], fill=box_rgb)
+        # Draw solid badge tab with dark background fill and color accent border
+        draw_base.rectangle([badge_x1, badge_y1, badge_x2, badge_y2], fill=COLOR_BADGE_BG, outline=box_rgb, width=2)
+        # Tactical left accent bar
+        draw_base.rectangle([badge_x1, badge_y1, badge_x1 + 4, badge_y2], fill=box_rgb)
 
-        # Draw badge label text
-        text_color = COLOR_TEXT_LIGHT if is_high_risk else COLOR_TEXT_DARK
+        # Render white text for maximum contrast
         draw_base.text(
-            (badge_x1 + pad_x, badge_y1 + pad_y),
+            (badge_x1 + pad_x + 2, badge_y1 + pad_y),
             badge_text,
-            fill=text_color,
+            fill=COLOR_TEXT_WHITE,
             font=font,
         )
 

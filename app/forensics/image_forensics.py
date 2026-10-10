@@ -31,7 +31,11 @@ except ImportError:
     _HAS_SCIPY = False
 
 from app.logging_config import get_logger
-from app.schemas import AuthenticityVerdict, DetectedTamperedRegion
+from app.schemas import (
+    AuthenticityVerdict,
+    DetectedTamperedRegion,
+    TamperedRegionCategory,
+)
 from app.utils.compression_fingerprint import (
     CompressionFingerprint,
     get_image_fingerprint,
@@ -162,9 +166,15 @@ def compute_hf_dct_inpainting_anomalies(
 
             conf = min(0.98, max(0.65, dct_score * 0.9 + 0.1))
             detected_regions.append({
-                "label": "inpainting_dct_anomaly",
+                "region_label": "AI-Inpainted Texture Anomaly",
+                "label": "AI-Inpainted Texture Anomaly",
+                "category": "INPAINTING",
                 "box_2d": [ymin_norm, xmin_norm, ymax_norm, xmax_norm],
                 "confidence": round(conf, 2),
+                "forensic_explanation": (
+                    f"High-frequency DCT anomaly cluster detected with {num_outliers} non-uniform "
+                    f"blocks (deviation > {threshold_sigma:.1f}σ from background median)."
+                ),
                 "forensic_reasoning": (
                     f"High-frequency DCT anomaly cluster detected with {num_outliers} non-uniform "
                     f"blocks (deviation > {threshold_sigma:.1f}σ from background median)."
@@ -179,7 +189,15 @@ def compute_hf_dct_inpainting_anomalies(
 # ─────────────────────────────────────────────────────────────────────────────
 
 VLM_GROUNDING_SYSTEM_PROMPT = """You are SafeSight AI, an elite multimodal forensic grounding engine.
-Your task is to pinpoint the EXACT spatial coordinates of any AI-generated, synthetic, or digitally spliced regions in this image.
+When inspecting images for manipulation or synthetic generation:
+1. Identify any localized region containing AI inpainting, pasted generative objects, or synthetic artifacts.
+2. For each detected region, assign:
+   - 'box_2d': Normalized coordinates [ymin, xmin, ymax, xmax] (0-1000).
+   - 'region_label': A concise, plain-English label describing the EXACT object (e.g., 'AI-Inpainted Birds in Sky', 'Synthetic Handwritten Notes', 'Deepfake Face Blend').
+   - 'category': One of 'INPAINTING', 'GENERATIVE_OBJECT', 'SYNTHETIC_TEXT', 'FACE_SWAP', 'COMPRESSION_ARTIFACT'.
+   - 'confidence': float between 0.0 and 1.0.
+   - 'forensic_explanation': Explain the visual or mathematical clue (e.g., 'Diffusion edge feathering inconsistent with natural sky background', 'Identical stroke pressure and kerning').
+Do NOT emit anonymous or generic labels like 'region_1' or 'anomaly'.
 
 Return ONLY a valid JSON object with this exact structure:
 {
@@ -187,9 +205,11 @@ Return ONLY a valid JSON object with this exact structure:
   "ai_percentage": 12.0,
   "tampered_regions": [
     {
-      "label": "ai_inpainted_birds",
+      "region_label": "AI-Inpainted Birds in Sky",
+      "category": "INPAINTING",
+      "confidence": 0.96,
       "box_2d": [180, 310, 340, 620],
-      "confidence": 0.96
+      "forensic_explanation": "Diffusion edge feathering inconsistent with natural sky background."
     }
   ]
 }
@@ -313,9 +333,15 @@ def analyze_image_forensics(
     # Combine ELA bounding box and DCT anomalies
     if ela_res.splicing_detected and ela_res.splicing_region_box:
         tampered_regions.append({
+            "region_label": "AI Spliced Element",
             "label": "ai_spliced_element",
+            "category": TamperedRegionCategory.INPAINTING.value,
             "box_2d": ela_res.splicing_region_box,
             "confidence": round(min(0.99, max(0.70, ela_res.splicing_anomaly_score)), 2),
+            "forensic_explanation": (
+                f"Differential Error Level Analysis detected localized compression error variance "
+                f"(score: {ela_res.splicing_anomaly_score:.2f}) inconsistent with background."
+            ),
             "forensic_reasoning": (
                 f"Differential Error Level Analysis detected localized compression error variance "
                 f"(score: {ela_res.splicing_anomaly_score:.2f}) inconsistent with background."
@@ -391,10 +417,12 @@ def analyze_image_forensics(
 
     p_regions = [
         DetectedTamperedRegion(
-            region_label=r["label"],
+            region_label=r.get("region_label") or r.get("label", "Tampered Region"),
+            category=r.get("category", TamperedRegionCategory.INPAINTING),
             confidence=float(r["confidence"]),
             box_2d=r["box_2d"],
-            forensic_reasoning=r.get("forensic_reasoning", "Tampered region"),
+            forensic_explanation=r.get("forensic_explanation") or r.get("forensic_reasoning", "Tampered region"),
+            forensic_reasoning=r.get("forensic_reasoning") or r.get("forensic_explanation", "Tampered region"),
         )
         for r in tampered_regions
     ]
