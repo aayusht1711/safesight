@@ -137,6 +137,7 @@ class Tier2Result(BaseModel):
 class AuthenticityVerdict(str, Enum):
     AUTHENTIC = "AUTHENTIC"
     BENIGN_AI_ASSISTED = "BENIGN_AI_ASSISTED"
+    HYBRID_HUMAN_AI_EDITED = "HYBRID_HUMAN_AI_EDITED"
     MALICIOUS_TAMPERING = "MALICIOUS_TAMPERING"
     SYNTHETIC_GENERATED = "SYNTHETIC_GENERATED"
 
@@ -190,6 +191,10 @@ class AuthenticityReportSchema(BaseModel):
     annotated_image_path: str | None = Field(
         default=None,
         description="Filesystem path or URI to the rendered visual inspection map with bounding box overlays.",
+    )
+    compression_fingerprint: str | None = Field(
+        default=None,
+        description="Quantization and metadata compression fingerprint (e.g. WhatsApp_Android_v2.23, Original_Camera_HighQ).",
     )
 
 

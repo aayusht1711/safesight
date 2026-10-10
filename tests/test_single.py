@@ -269,6 +269,21 @@ def display_result(
     else:
         conf_badge = f"{conf_pct} [dim red](Low / Borderline)[/dim red]"
 
+    # Provenance fingerprint
+    comp_fp = auth_report.get("compression_fingerprint") if "auth_report" in locals() else None
+    if not comp_fp and input_file:
+        try:
+            from app.utils.compression_fingerprint import get_image_fingerprint
+            p_in = Path(input_file)
+            if p_in.exists() and p_in.suffix.lower() in (".jpg", ".jpeg"):
+                fp_obj = get_image_fingerprint(p_in)
+                comp_fp = fp_obj.fingerprint_label
+        except Exception:
+            pass
+
+    if comp_fp:
+        summary_table.add_row("Provenance Fingerprint", f"[bold cyan]🧬  {comp_fp}[/bold cyan]")
+
     summary_table.add_row("Model Decision", decision_badge)
     summary_table.add_row("Confidence Rating", conf_badge)
     summary_table.add_row("Pipeline Tier Used", f"[magenta]{tier}[/magenta]")

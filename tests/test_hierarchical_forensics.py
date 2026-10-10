@@ -411,3 +411,166 @@ class TestLocalizedTamperingAndVisualizer:
             assert res.tampered_regions[0].box_2d == [100, 80, 400, 920]
             assert res.tampered_regions[1].region_label == "inpainting"
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Compression Fingerprinting & Differential ELA Forensics Tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestCompressionAwareForensics:
+    """Validates compression fingerprinting, differential ELA, and calibrated verdict logic."""
+
+    @pytest.fixture
+    def authentic_whatsapp_image(self) -> Image.Image:
+        """Create a simulated WhatsApp photo (Q75, no EXIF metadata)."""
+        img = Image.new("RGB", (300, 300), color=(130, 150, 170))
+        draw = ImageDraw.Draw(img)
+        # Add smooth natural gradient lines
+        for y in range(0, 300, 10):
+            draw.line([(0, y), (300, y)], fill=(120, 140, 160 + y // 5), width=2)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=75)
+        buf.seek(0)
+        return Image.open(buf)
+
+    @pytest.fixture
+    def spliced_whatsapp_image(self, authentic_whatsapp_image) -> Image.Image:
+        """Create an image where an uncompressed AI object (e.g. bird patch) is spliced onto WhatsApp background."""
+        img = authentic_whatsapp_image.copy()
+        # Paste a sharp high-contrast patch (e.g., simulated bird at 100,100 to 180,180)
+        bird_patch = Image.new("RGB", (80, 80), color=(255, 30, 20))
+        draw = ImageDraw.Draw(bird_patch)
+        draw.ellipse([(10, 10), (70, 70)], fill=(240, 240, 20), outline=(0, 0, 0))
+        img.paste(bird_patch, (100, 100))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=75)
+        buf.seek(0)
+        return Image.open(buf)
+
+    def test_get_image_fingerprint_whatsapp(self, authentic_whatsapp_image):
+        from app.utils.compression_fingerprint import get_image_fingerprint
+
+        fp = get_image_fingerprint(authentic_whatsapp_image)
+        assert fp.is_social_media_compressed is True
+        assert fp.has_exif is False
+        assert fp.fingerprint_label in ("WhatsApp_Android_v2.23", "WhatsApp_Standard")
+        assert 68 <= fp.estimated_quality <= 78
+        assert "CRITICAL CONTEXT" in fp.forensic_context
+
+    def test_get_image_fingerprint_camera_highq(self):
+        from app.utils.compression_fingerprint import get_image_fingerprint
+
+        # High quality Q95 JPEG
+        img = Image.new("RGB", (150, 150), (100, 120, 140))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=95)
+        buf.seek(0)
+        loaded = Image.open(buf)
+
+        fp = get_image_fingerprint(loaded)
+        assert fp.fingerprint_label == "Original_Camera_HighQ"
+        assert fp.is_social_media_compressed is False
+        assert fp.estimated_quality >= 90
+
+    def test_differential_ela_detects_splicing_on_whatsapp_background(
+        self, authentic_whatsapp_image, spliced_whatsapp_image
+    ):
+        from app.utils.ela_detector import perform_error_level_analysis
+
+        # Case A: Authentic WhatsApp image -> No localized differential divergence
+        res_auth = perform_error_level_analysis(authentic_whatsapp_image)
+        assert res_auth.splicing_detected is False
+        assert res_auth.is_synthetic_suspicious is False
+
+        # Case B: Spliced WhatsApp image -> Differential ELA flags high-confidence splice
+        res_spliced = perform_error_level_analysis(spliced_whatsapp_image)
+        assert res_spliced.splicing_detected is True
+        assert res_spliced.splicing_region_box is not None
+        assert res_spliced.splicing_anomaly_score >= 1.5
+
+        # Check box coordinates intersect with pasted patch (100, 100, 180, 180 in 300x300 => ~333 norm)
+        box = res_spliced.splicing_region_box
+        assert box[0] <= 500 and box[2] >= 250
+        assert box[1] <= 500 and box[3] >= 250
+
+    @pytest.mark.anyio
+    async def test_authentic_whatsapp_verdict_not_falsely_flagged(
+        self, authentic_whatsapp_image
+    ):
+        """
+        Critical Validation:
+        An authentic WhatsApp photo must NOT be flagged as AI-generated!
+        Reasoning must state:
+        'Authenticity Verdict: AUTHENTIC. Forensic analysis confirmed the presence of heavy WhatsApp compression artifacts...'
+        """
+        from app.utils.compression_fingerprint import get_image_fingerprint
+        from app.utils.ela_detector import perform_error_level_analysis
+
+        fp = get_image_fingerprint(authentic_whatsapp_image)
+        ela = perform_error_level_analysis(authentic_whatsapp_image, fingerprint=fp)
+        stage1 = Stage1TextResult(
+            synthetic_text_confidence=0.10,
+            text_classification="NO_TEXT",
+            handwriting_variations_detected=False,
+            observations="No synthetic handwriting present.",
+        )
+
+        with patch("app.pipeline.hierarchical.get_ollama_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.generate_multimodal.return_value = (None, "", False)
+            mock_get_client.return_value = mock_client
+
+            res = await run_stage2_contextual_evaluation(
+                image=authentic_whatsapp_image,
+                stage1_result=stage1,
+                ela_result=ela,
+                fingerprint=fp,
+            )
+
+        assert res.overall_authenticity_verdict == AuthenticityVerdict.AUTHENTIC
+        assert res.ai_involvement_percentage == 0.0
+        assert res.decision == ModerationDecision.APPROVED
+        assert "Authenticity Verdict: AUTHENTIC." in res.explanation
+        assert "WhatsApp compression artifacts" in res.explanation
+
+    @pytest.mark.anyio
+    async def test_spliced_whatsapp_photo_flagged_with_birds_explanation(
+        self, spliced_whatsapp_image
+    ):
+        """
+        Critical Validation:
+        An edited photo with spliced objects on a WhatsApp background must state:
+        'Authenticity Verdict: TAMPERED (PARTIAL_SYNTHETIC). While the background shows standard WhatsApp compression...'
+        """
+        from app.utils.compression_fingerprint import get_image_fingerprint
+        from app.utils.ela_detector import perform_error_level_analysis
+
+        fp = get_image_fingerprint(spliced_whatsapp_image)
+        ela = perform_error_level_analysis(spliced_whatsapp_image, fingerprint=fp)
+        stage1 = Stage1TextResult(
+            synthetic_text_confidence=0.10,
+            text_classification="NO_TEXT",
+            handwriting_variations_detected=False,
+            observations="No text present.",
+        )
+
+        with patch("app.pipeline.hierarchical.get_ollama_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.generate_multimodal.return_value = (None, "", False)
+            mock_get_client.return_value = mock_client
+
+            res = await run_stage2_contextual_evaluation(
+                image=spliced_whatsapp_image,
+                stage1_result=stage1,
+                ela_result=ela,
+                fingerprint=fp,
+            )
+
+        assert res.overall_authenticity_verdict == AuthenticityVerdict.HYBRID_HUMAN_AI_EDITED
+        assert res.ai_involvement_percentage >= 65.0
+        assert "Authenticity Verdict: TAMPERED (PARTIAL_SYNTHETIC)." in res.explanation
+        assert "While the background shows standard" in res.explanation
+        assert "differential ELA and VLM analysis detected a high-probability digital splice" in res.explanation
+        assert len(res.tampered_regions) >= 1
+
+
+
