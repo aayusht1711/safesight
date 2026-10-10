@@ -141,6 +141,31 @@ class AuthenticityVerdict(str, Enum):
     SYNTHETIC_GENERATED = "SYNTHETIC_GENERATED"
 
 
+class DetectedTamperedRegion(BaseModel):
+    """
+    Normalized 2D bounding box representing localized media tampering,
+    inpainting, synthetic text, deepfake faces, or generative artifacts.
+    """
+    region_label: str = Field(
+        ...,
+        description="Category of detected tampering, e.g., 'synthetic_text', 'inpainting', 'deepfake_face', 'adversarial_artifact'.",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score for this specific localized region (0.0 to 1.0).",
+    )
+    box_2d: list[int] = Field(
+        ...,
+        description="Normalized coordinates [ymin, xmin, ymax, xmax] scaled from 0 to 1000.",
+    )
+    forensic_reasoning: str = Field(
+        ...,
+        description="Forensic rationale detailing the visual or compression anomalies within this box.",
+    )
+
+
 class AuthenticityReportSchema(BaseModel):
     """Forensic media authenticity and localized tampering report."""
 
@@ -158,6 +183,18 @@ class AuthenticityReportSchema(BaseModel):
         default_factory=list,
         description="Detailed forensic annotations identifying specific localized or global tampering.",
     )
+    tampered_regions: list[DetectedTamperedRegion] = Field(
+        default_factory=list,
+        description="Normalized bounding boxes highlighting exact localized regions of synthetic manipulation.",
+    )
+    annotated_image_path: str | None = Field(
+        default=None,
+        description="Filesystem path or URI to the rendered visual inspection map with bounding box overlays.",
+    )
+
+
+# Schema aliases for developer convenience
+AuthenticityReport = AuthenticityReportSchema
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -187,6 +224,9 @@ class ModerationResult(BaseModel):
     media_types_processed: list[MediaType] = Field(default_factory=list)
 
     model_config = {"use_enum_values": True}
+
+
+ModerationResponse = ModerationResult
 
 
 

@@ -24,6 +24,9 @@ from app.pipeline.hierarchical import (
     run_hierarchical_contextual_forensics,
 )
 
+from app.schemas import DetectedTamperedRegion
+from app.utils.visualizer import render_annotated_tampering_image
+
 __all__ = [
     "run_moderation_pipeline",
     "run_tier1_gate",
@@ -34,6 +37,8 @@ __all__ = [
     "HierarchicalForensicsOutcome",
     "Stage1TextResult",
     "Stage2ContextualResult",
+    "DetectedTamperedRegion",
+    "render_annotated_tampering_image",
     "STAGE1_SYSTEM_PROMPT",
     "STAGE1_USER_PROMPT",
     "STAGE2_SYSTEM_PROMPT",

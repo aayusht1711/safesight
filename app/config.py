@@ -95,3 +95,25 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Return a cached singleton Settings instance."""
     return Settings()
+
+
+# ── Bounding-Box Grounded Schema Re-exports ──────────────────────────────────
+# Convenience aliases to support direct imports from app.config
+from app.schemas import (
+    AuthenticityReport,
+    AuthenticityReportSchema,
+    DetectedTamperedRegion,
+    ModerationResponse,
+    ModerationResult,
+)
+
+__all__ = [
+    "Settings",
+    "get_settings",
+    "DetectedTamperedRegion",
+    "AuthenticityReport",
+    "AuthenticityReportSchema",
+    "ModerationResponse",
+    "ModerationResult",
+]
+

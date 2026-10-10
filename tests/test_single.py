@@ -329,6 +329,81 @@ def display_result(
     console.print(forensics_panel)
 
     # ─────────────────────────────────────────────────────────────────────────
+    # C.2 'LOCALIZED TAMPERING COORDINATES' TABLE & INSPECTION MAP
+    # ─────────────────────────────────────────────────────────────────────────
+    tampered_regions = auth_report.get("tampered_regions", [])
+    if tampered_regions:
+        console.print()
+        coord_table = Table(
+            title="[bold red]🎯  Localized Tampering Coordinates[/bold red]",
+            title_justify="left",
+            border_style="bold red",
+            header_style="bold red",
+            box=box.ROUNDED,
+            expand=True,
+            show_lines=True,
+        )
+        coord_table.add_column("Region", style="bold yellow", no_wrap=True)
+        coord_table.add_column("Confidence", justify="right", style="bold white", no_wrap=True)
+        coord_table.add_column("Bounding Box (ymin, xmin, ymax, xmax)", justify="center", style="cyan", no_wrap=True)
+        coord_table.add_column("Anomaly Details", style="white")
+
+        for r in tampered_regions:
+            if hasattr(r, "region_label"):
+                lbl = r.region_label
+                conf_val = float(r.confidence)
+                box_coords = r.box_2d
+                reason = r.forensic_reasoning
+            elif isinstance(r, dict):
+                lbl = r.get("region_label", "synthetic_element")
+                conf_val = float(r.get("confidence", 0.0))
+                box_coords = r.get("box_2d", [0, 0, 0, 0])
+                reason = r.get("forensic_reasoning", "Localized anomaly detected.")
+            else:
+                continue
+
+            coord_str = f"[{box_coords[0]}, {box_coords[1]}, {box_coords[2]}, {box_coords[3]}]"
+            coord_table.add_row(
+                str(lbl),
+                f"{conf_val * 100:.1f}%",
+                coord_str,
+                str(reason),
+            )
+
+        console.print(coord_table)
+
+    # Render inspection link if annotated image exists or can be rendered
+    annotated_path = auth_report.get("annotated_image_path")
+    if not annotated_path and input_file and tampered_regions:
+        try:
+            from app.utils.visualizer import render_annotated_tampering_image
+            p_in = Path(input_file)
+            if p_in.exists() and p_in.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+                from app.schemas import DetectedTamperedRegion
+                t_objs = [
+                    r if isinstance(r, DetectedTamperedRegion)
+                    else DetectedTamperedRegion(**r)
+                    for r in tampered_regions
+                ]
+                rendered_path = render_annotated_tampering_image(p_in, t_objs)
+                annotated_path = str(rendered_path)
+        except Exception:
+            pass
+
+    if annotated_path:
+        p_annotated = Path(annotated_path).resolve()
+        annotated_uri = p_annotated.as_uri()
+        console.print(
+            Padding(
+                Text.assemble(
+                    ("🖼️  Annotated Forensic Inspection Map: ", "bold cyan"),
+                    (annotated_uri, "bold underline green"),
+                ),
+                (1, 0, 0, 1),
+            )
+        )
+
+    # ─────────────────────────────────────────────────────────────────────────
     # D. RED BORDER 'POLICY VIOLATIONS' TABLE (ONLY if violations exist)
     # ─────────────────────────────────────────────────────────────────────────
     violations = data.get("detected_violations", [])

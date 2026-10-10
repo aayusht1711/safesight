@@ -296,3 +296,118 @@ Thank you."""
             assert outcome.moderation_result.authenticity_report.verdict == AuthenticityVerdict.SYNTHETIC_GENERATED
             assert outcome.moderation_result.authenticity_report.ai_involvement_percentage == 95.0
             assert len(outcome.moderation_result.detected_violations) >= 1
+            assert len(outcome.moderation_result.authenticity_report.tampered_regions) >= 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Localized Grounding & Visualizer Tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestLocalizedTamperingAndVisualizer:
+    """Tests for DetectedTamperedRegion and render_annotated_tampering_image."""
+
+    def test_detected_tampered_region_schema_instantiation(self):
+        from app.schemas import DetectedTamperedRegion, AuthenticityReportSchema
+
+        region = DetectedTamperedRegion(
+            region_label="synthetic_text",
+            confidence=0.96,
+            box_2d=[100, 150, 400, 850],
+            forensic_reasoning="Synthesized letterforms detected.",
+        )
+        assert region.region_label == "synthetic_text"
+        assert region.confidence == 0.96
+        assert region.box_2d == [100, 150, 400, 850]
+        assert "Synthesized" in region.forensic_reasoning
+
+        report = AuthenticityReportSchema(
+            verdict=AuthenticityVerdict.SYNTHETIC_GENERATED,
+            ai_involvement_percentage=96.0,
+            tampered_regions=[region],
+        )
+        assert len(report.tampered_regions) == 1
+        assert report.tampered_regions[0].region_label == "synthetic_text"
+
+    def test_render_annotated_tampering_image(self, tmp_path, sample_synthetic_document_image):
+        from app.schemas import DetectedTamperedRegion
+        from app.utils.visualizer import render_annotated_tampering_image
+
+        regions = [
+            DetectedTamperedRegion(
+                region_label="synthetic_text",
+                confidence=0.95,
+                box_2d=[60, 40, 500, 960],
+                forensic_reasoning="Computer-generated font glyphs detected.",
+            ),
+            DetectedTamperedRegion(
+                region_label="inpainting",
+                confidence=0.82,
+                box_2d=[520, 100, 900, 900],
+                forensic_reasoning="Compression variance in bottom region.",
+            ),
+        ]
+
+        target_out = tmp_path / "annotated_test_doc.png"
+        saved_path = render_annotated_tampering_image(
+            image_input=sample_synthetic_document_image,
+            tampered_regions=regions,
+            output_path=target_out,
+        )
+
+        assert saved_path.exists()
+        assert saved_path == target_out.resolve()
+
+        # Check annotated image can be opened and dimensions match
+        annotated_img = Image.open(saved_path)
+        assert annotated_img.size == sample_synthetic_document_image.size
+
+    @pytest.mark.anyio
+    async def test_stage2_parses_explicit_tampered_regions(self, sample_synthetic_document_image):
+        stage1 = Stage1TextResult(
+            synthetic_text_confidence=0.88,
+            text_classification="AI_SYNTHETIC_TEXT",
+            handwriting_variations_detected=False,
+            observations="Micro-tremors absent.",
+        )
+        ela = perform_error_level_analysis(sample_synthetic_document_image)
+
+        s2_json = {
+            "overall_authenticity_verdict": "SYNTHETIC_GENERATED",
+            "ai_involvement_percentage": 94.0,
+            "decision": "FLAGGED",
+            "confidence_score": 0.93,
+            "scene_physics_assessment": "Unnatural shadow angles on desk.",
+            "explanation": "Document and desk are fully rendered.",
+            "tampered_regions": [
+                {
+                    "region_label": "synthetic_text",
+                    "confidence": 0.95,
+                    "box_2d": [100, 80, 400, 920],
+                    "forensic_reasoning": "Unnatural glyph smoothness on paper fibers.",
+                },
+                {
+                    "region_label": "inpainting",
+                    "confidence": 0.88,
+                    "box_2d": [500, 100, 800, 800],
+                    "forensic_reasoning": "Spliced border region.",
+                },
+            ],
+            "detected_violations": [],
+        }
+
+        with patch("app.pipeline.hierarchical.get_ollama_client") as mock_get_client:
+            mock_client = AsyncMock()
+            mock_client.generate_multimodal.return_value = (s2_json, json.dumps(s2_json), True)
+            mock_get_client.return_value = mock_client
+
+            res = await run_stage2_contextual_evaluation(
+                image=sample_synthetic_document_image,
+                stage1_result=stage1,
+                ela_result=ela,
+            )
+
+            assert len(res.tampered_regions) == 2
+            assert res.tampered_regions[0].region_label == "synthetic_text"
+            assert res.tampered_regions[0].box_2d == [100, 80, 400, 920]
+            assert res.tampered_regions[1].region_label == "inpainting"
+

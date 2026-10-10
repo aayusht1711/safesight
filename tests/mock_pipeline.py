@@ -24,6 +24,7 @@ from pathlib import Path
 from app.schemas import (
     AuthenticityReportSchema,
     AuthenticityVerdict,
+    DetectedTamperedRegion,
     DetectedViolation,
     MediaType,
     ModerationDecision,
@@ -266,6 +267,7 @@ def mock_moderate(
     # ── Authenticity / Forensics Report ────────────────────────────────────────
     is_deepfake = any(v.category == ViolationCategory.DEEPFAKE for v in violations)
     is_ai_text = bool(re.search(r"\b(furthermore|moreover|consequently|cutting-edge)\b", cleaned, re.I) and "paradigm" in cleaned) if text else False
+    tampered_regions: list[DetectedTamperedRegion] = []
     if is_deepfake:
         auth_verdict = AuthenticityVerdict.MALICIOUS_TAMPERING
         ai_pct = 95.0
@@ -273,12 +275,28 @@ def mock_moderate(
             "Deepfake disclosure or synthetic facial features identified in content.",
             "High inter-frame landmark variance and compression boundary artifacts detected.",
         ]
+        tampered_regions = [
+            DetectedTamperedRegion(
+                region_label="deepfake_face",
+                confidence=0.95,
+                box_2d=[120, 240, 680, 760],
+                forensic_reasoning="Synthesized facial geometry and localized compression boundary artifacts detected.",
+            )
+        ]
     elif is_ai_text:
         auth_verdict = AuthenticityVerdict.SYNTHETIC_GENERATED
         ai_pct = 92.0
         annotations = [
             "Text exhibits uniform low perplexity and regular sentence length distribution.",
             "Pattern matches LLM output (uniform predictability).",
+        ]
+        tampered_regions = [
+            DetectedTamperedRegion(
+                region_label="synthetic_text",
+                confidence=0.92,
+                box_2d=[60, 40, 940, 960],
+                forensic_reasoning="Stage 1 typography analysis detected computer-generated / synthetic text.",
+            )
         ]
     else:
         auth_verdict = AuthenticityVerdict.AUTHENTIC
@@ -291,6 +309,7 @@ def mock_moderate(
         verdict=auth_verdict,
         ai_involvement_percentage=ai_pct,
         tamper_annotations=annotations,
+        tampered_regions=tampered_regions,
     )
 
     return ModerationResult(

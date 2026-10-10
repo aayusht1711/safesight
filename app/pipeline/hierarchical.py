@@ -108,6 +108,15 @@ If the text is synthetic, there is a high probability the entire scene is a rend
    - When a notebook, document, or memo contains synthetic text and was generated as a whole scene, 'ai_involvement_percentage' must NOT be artificially diluted (e.g., 20-30%).
    - Rate 'ai_involvement_percentage' between 85.0% and 100.0% if the focal scene is an AI generation.
 
+4. LOCALIZED TAMPERING & BOUNDING BOX GROUNDING:
+   - When analyzing media authenticity, identify any localized regions containing synthetic elements, inpainting, or AI-rendered text/faces.
+   - Return exact bounding box coordinates using normalized [ymin, xmin, ymax, xmax] coordinates from 0 to 1000.
+   - For every localized anomaly, provide:
+       * "region_label": "synthetic_text" | "inpainting" | "deepfake_face" | "adversarial_artifact"
+       * "confidence": float between 0.0 and 1.0
+       * "box_2d": [ymin, xmin, ymax, xmax] (normalized coordinates from 0 to 1000)
+       * "forensic_reasoning": specific observations explaining the manipulation
+
 ### OUTPUT FORMAT:
 Output ONLY a strictly valid JSON object:
 {
@@ -117,6 +126,14 @@ Output ONLY a strictly valid JSON object:
   "confidence_score": <float 0.0 to 1.0>,
   "scene_physics_assessment": "Detailed evaluation of paper texture, lighting, shadow angles, and rendering artifacts.",
   "explanation": "Final comprehensive forensic synthesis connecting Stage 1 text analysis, background physics, and ELA signals.",
+  "tampered_regions": [
+    {
+      "region_label": "synthetic_text" | "inpainting" | "deepfake_face" | "adversarial_artifact",
+      "confidence": <float 0.0 to 1.0>,
+      "box_2d": [<ymin 0-1000>, <xmin 0-1000>, <ymax 0-1000>, <xmax 0-1000>],
+      "forensic_reasoning": "Forensic rationale detailing anomalies within this region."
+    }
+  ],
   "detected_violations": [
     {
       "category": "DEEPFAKE" | "SPAM_AND_MANIPULATION" | "MISINFORMATION",
@@ -137,6 +154,9 @@ Output ONLY a strictly valid JSON object:
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Data Structures
 # ─────────────────────────────────────────────────────────────────────────────
+
+from app.schemas import DetectedTamperedRegion
+
 
 @dataclass
 class Stage1TextResult:
@@ -159,6 +179,8 @@ class Stage2ContextualResult:
     explanation: str
     detected_violations: list[DetectedViolation]
     reasoning: ReasoningBlock
+    tampered_regions: list[DetectedTamperedRegion] = field(default_factory=list)
+    annotated_image_path: str | None = None
     latency_ms: float = 0.0
 
 
@@ -263,7 +285,8 @@ def _build_stage2_user_prompt(
 - Accompanying Caption: {accompanying_text or '(none provided)'}
 
 Re-evaluate the entire scene. Do the background elements like paper texture, lighting, and object physics appear consistent with a real photograph, or do they show the subtle uniformity and perfection of a 3D render?
-Output your final 'overall_authenticity_verdict', 'ai_involvement_percentage', and 'explanation' as JSON.
+When analyzing media authenticity, identify any localized regions containing synthetic elements, inpainting, or AI-rendered text/faces. Return exact bounding box coordinates using normalized [ymin, xmin, ymax, xmax] coordinates from 0 to 1000.
+Output your final 'overall_authenticity_verdict', 'ai_involvement_percentage', 'tampered_regions', and 'explanation' as JSON.
 """
 
 
@@ -276,7 +299,7 @@ async def run_stage2_contextual_evaluation(
 ) -> Stage2ContextualResult:
     """
     Stage 2: Re-evaluates entire scene given Stage 1 typography assessment
-    and ELA compression metrics.
+    and ELA compression metrics, detecting localized tampered regions.
     """
     t0 = time.perf_counter()
     ollama_client = get_ollama_client()
@@ -325,6 +348,56 @@ async def run_stage2_contextual_evaluation(
         physics_notes = str(parsed_json.get("scene_physics_assessment", "Scene physics evaluated."))
         explanation = str(parsed_json.get("explanation", "Contextual forensics evaluation complete."))
 
+        # Parse grounded tampered bounding box regions
+        raw_regions = parsed_json.get("tampered_regions", [])
+        tampered_regions: list[DetectedTamperedRegion] = []
+        for r in raw_regions:
+            try:
+                box = r.get("box_2d", [])
+                if isinstance(box, list) and len(box) == 4:
+                    box_norm = [max(0, min(1000, int(c))) for c in box]
+                    if box_norm[2] > box_norm[0] and box_norm[3] > box_norm[1]:
+                        tampered_regions.append(
+                            DetectedTamperedRegion(
+                                region_label=str(r.get("region_label", "synthetic_element")),
+                                confidence=max(0.0, min(1.0, float(r.get("confidence", 0.90)))),
+                                box_2d=box_norm,
+                                forensic_reasoning=str(r.get("forensic_reasoning", "Localized anomaly detected.")),
+                            )
+                        )
+            except Exception:
+                pass
+
+        # Robust grounding fallback if model did not return boxes on tampered media
+        if verdict != AuthenticityVerdict.AUTHENTIC and not tampered_regions:
+            if stage1_result.synthetic_text_confidence >= 0.65:
+                tampered_regions.append(
+                    DetectedTamperedRegion(
+                        region_label="synthetic_text",
+                        confidence=round(stage1_result.synthetic_text_confidence, 2),
+                        box_2d=[60, 40, 940, 960],
+                        forensic_reasoning="Stage 1 typography analysis detected computer-generated / synthetic handwriting.",
+                    )
+                )
+            if ela_result.is_synthetic_suspicious or ela_result.text_vs_background_discrepancy > 1.20:
+                q_coords = {
+                    "top-left": [0, 0, 500, 500],
+                    "top-right": [0, 500, 500, 1000],
+                    "bottom-left": [500, 0, 1000, 500],
+                    "bottom-right": [500, 500, 1000, 1000],
+                    "center": [250, 250, 750, 750],
+                }
+                hottest_q = max(ela_result.quadrant_variances, key=ela_result.quadrant_variances.get) if ela_result.quadrant_variances else "center"
+                box_q = q_coords.get(hottest_q, [200, 200, 800, 800])
+                tampered_regions.append(
+                    DetectedTamperedRegion(
+                        region_label="inpainting" if verdict == AuthenticityVerdict.MALICIOUS_TAMPERING else "adversarial_artifact",
+                        confidence=round(conf, 2),
+                        box_2d=box_q,
+                        forensic_reasoning=f"Elevated ELA compression discrepancy concentrated in {hottest_q} quadrant.",
+                    )
+                )
+
         violations: list[DetectedViolation] = []
         for v in parsed_json.get("detected_violations", []):
             try:
@@ -355,6 +428,7 @@ async def run_stage2_contextual_evaluation(
             explanation=explanation,
             detected_violations=violations,
             reasoning=reasoning,
+            tampered_regions=tampered_regions,
             latency_ms=elapsed_ms,
         )
 
@@ -369,10 +443,19 @@ async def run_stage2_contextual_evaluation(
         fallback_verdict = AuthenticityVerdict.SYNTHETIC_GENERATED
         fallback_ai_pct = max(85.0, stage1_result.synthetic_text_confidence * 100.0)
         fallback_decision = ModerationDecision.HUMAN_AUDIT_REQUIRED
+        fallback_regions = [
+            DetectedTamperedRegion(
+                region_label="synthetic_text",
+                confidence=round(stage1_result.synthetic_text_confidence, 2),
+                box_2d=[60, 40, 940, 960],
+                forensic_reasoning=f"Algorithmic typography assessment scored synthetic text at {stage1_result.synthetic_text_confidence:.2f}.",
+            )
+        ]
     else:
         fallback_verdict = AuthenticityVerdict.AUTHENTIC
         fallback_ai_pct = 0.0
         fallback_decision = ModerationDecision.APPROVED
+        fallback_regions = []
 
     return Stage2ContextualResult(
         overall_authenticity_verdict=fallback_verdict,
@@ -398,6 +481,7 @@ async def run_stage2_contextual_evaluation(
             visual_explanation=ela_result.summary_description,
             bimodal_synergy="Contextual coupling applied: synthetic typography escalates scene likelihood.",
         ),
+        tampered_regions=fallback_regions,
         latency_ms=elapsed_ms,
     )
 
@@ -416,7 +500,7 @@ async def run_hierarchical_contextual_forensics(
 
     Stage 1: Textual Element Analysis
     Parallel: ELA Error Level Analysis computation
-    Stage 2: Contextual Re-evaluation & Scene Physics
+    Stage 2: Contextual Re-evaluation & Grounded Bounding Boxes
     """
     pipeline_t0 = time.perf_counter()
 
@@ -437,17 +521,32 @@ async def run_hierarchical_contextual_forensics(
 
     total_latency = (time.perf_counter() - pipeline_t0) * 1000
 
-    # Build standard ModerationResult
+    # Build standard ModerationResult with localized bounding box overlay
     annotations = [
         f"[Stage 1] Typography analysis: {stage1_res.observations}",
         f"[ELA] Compression profile: {ela_res.summary_description}",
         f"[Stage 2] Scene physics verdict: {stage2_res.explanation}",
     ]
 
+    annotated_path_str: str | None = None
+    if stage2_res.tampered_regions:
+        try:
+            from app.utils.visualizer import render_annotated_tampering_image
+            annotated_file = render_annotated_tampering_image(
+                image_input=image,
+                tampered_regions=stage2_res.tampered_regions,
+            )
+            annotated_path_str = str(annotated_file)
+            stage2_res.annotated_image_path = annotated_path_str
+        except Exception as exc:
+            logger.warning("Visual bounding box overlay generation failed", error=str(exc))
+
     auth_report = AuthenticityReportSchema(
         verdict=stage2_res.overall_authenticity_verdict,
         ai_involvement_percentage=stage2_res.ai_involvement_percentage,
         tamper_annotations=annotations,
+        tampered_regions=stage2_res.tampered_regions,
+        annotated_image_path=annotated_path_str,
     )
 
     mod_result = ModerationResult(
@@ -468,3 +567,4 @@ async def run_hierarchical_contextual_forensics(
         moderation_result=mod_result,
         total_latency_ms=total_latency,
     )
+

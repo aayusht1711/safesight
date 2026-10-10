@@ -37,6 +37,9 @@ from app.pipeline.hierarchical import (
     run_hierarchical_contextual_forensics,
 )
 
+from app.schemas import DetectedTamperedRegion
+from app.utils.visualizer import render_annotated_tampering_image
+
 async def run_moderation_pipeline(*args, **kwargs):
     """Forwarding delegate to app.pipeline.orchestrator.run_moderation_pipeline."""
     from app.pipeline.orchestrator import run_moderation_pipeline as _orch_run
@@ -49,6 +52,8 @@ __all__ = [
     "Stage1TextResult",
     "Stage2ContextualResult",
     "HierarchicalForensicsOutcome",
+    "DetectedTamperedRegion",
+    "render_annotated_tampering_image",
     "_extract_json_payload",
     "_build_stage2_user_prompt",
     "run_stage1_text_analysis",
