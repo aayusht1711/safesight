@@ -36,8 +36,30 @@ from app.utils.ela_detector import (
     perform_ela_async,
 )
 from app.utils.visualizer import render_annotated_tampering_image
+from app.pipeline.multimodal_router import (
+    run_multimodal_forensics,
+    detect_media_modality,
+    analyze_image_forensics,
+    analyze_audio_forensics,
+    analyze_video_forensics,
+    ImageForensicsResult,
+    AudioForensicsResult,
+    VideoForensicsResult,
+    SyntheticAudioSegment,
+    ManipulatedFrameRange,
+)
 
 __all__ = [
+    "run_multimodal_forensics",
+    "detect_media_modality",
+    "analyze_image_forensics",
+    "analyze_audio_forensics",
+    "analyze_video_forensics",
+    "ImageForensicsResult",
+    "AudioForensicsResult",
+    "VideoForensicsResult",
+    "SyntheticAudioSegment",
+    "ManipulatedFrameRange",
     "run_moderation_pipeline",
     "run_tier1_gate",
     "run_tier2_vlm",

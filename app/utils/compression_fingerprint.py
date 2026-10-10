@@ -89,6 +89,14 @@ class CompressionFingerprint:
             "forensic_context": self.forensic_context,
         }
 
+    @property
+    def is_social_media(self) -> bool:
+        return self.is_social_media_compressed
+
+    @property
+    def profile(self) -> str:
+        return self.fingerprint_label
+
 
 def estimate_jpeg_quality_from_dqt(table: list[int]) -> int:
     """
@@ -269,6 +277,16 @@ def get_image_fingerprint(
         forensic_context = (
             "CRITICAL CONTEXT: This image has been processed by a known social media compression engine. "
             "Expect to see heavy JPEG artifacts, blockiness, and color banding. "
+            "Your task is to IGNORE these compression artifacts and search ONLY for additional, anomalous signs of generative AI, "
+            "such as unnatural objects, impossible physics, or splicing artifacts that are inconsistent with the background compression."
+        )
+
+    elif not has_exif and (83 <= est_q <= 88):
+        fingerprint_label = "Telegram_Mobile_Desktop"
+        is_social_media = True
+        forensic_context = (
+            "CRITICAL CONTEXT: This image has been processed by a known social media compression engine (Telegram). "
+            "Expect to see JPEG quantization artifacts, stripped metadata, and standard block boundaries. "
             "Your task is to IGNORE these compression artifacts and search ONLY for additional, anomalous signs of generative AI, "
             "such as unnatural objects, impossible physics, or splicing artifacts that are inconsistent with the background compression."
         )

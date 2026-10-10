@@ -45,8 +45,10 @@ if str(_PROJECT_ROOT) not in sys.path:
 try:
     from rich import box
     from rich.console import Console
+    from rich.padding import Padding
     from rich.panel import Panel
     from rich.status import Status
+    from rich.table import Table
     from rich.text import Text
 except ImportError:
     print("ERROR: 'rich' library is required. Run: pip install rich>=13.7.0")
@@ -71,6 +73,7 @@ except ImportError:
     sys.exit(1)
 
 # Project component imports
+from app.pipeline import run_multimodal_forensics
 from app.ui.splash import display_splash_screen
 from tests.engine_manager import ensure_backend, is_server_managed
 from tests.test_single import _execute_mock_request, display_result
@@ -267,8 +270,171 @@ def display_offline_card(host: str = DEFAULT_API_HOST, port: int = DEFAULT_API_P
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. API Dispatch & Forensics Execution
+# 3. Multimodal Forensics Dashboard & Execution
 # ─────────────────────────────────────────────────────────────────────────────
+
+def display_multimodal_forensics_card(
+    forensic_data: dict[str, Any],
+    file_path: Path,
+) -> None:
+    """
+    Render executive multimodal forensics report:
+      - Modality Processed (IMAGE / AUDIO / VIDEO)
+      - Exact Spliced/AI Component
+      - Coordinate / Timestamp Table
+      - Direct file URI and path to visual evidence proof
+    """
+    modality = str(forensic_data.get("modality", "IMAGE")).upper()
+    verdict = str(forensic_data.get("verdict", "AUTHENTIC")).upper()
+    ai_component = str(forensic_data.get("ai_component", "None (Authentic)"))
+    ai_pct = float(forensic_data.get("ai_percentage", 0.0))
+    conf = float(forensic_data.get("confidence", 1.0))
+    evidence_path = forensic_data.get("evidence_file_path")
+    explanation = str(forensic_data.get("forensic_explanation", ""))
+    items = forensic_data.get("coordinates_or_timestamps", [])
+
+    is_tampered = "AUTHENTIC" not in verdict and "GENUINE" not in verdict
+    status_color = "red" if is_tampered else "green"
+    status_icon = "⚠️" if is_tampered else "🛡️"
+
+    console.print()
+    banner = Panel(
+        Text.assemble(
+            ("SafeSight AI Enterprise Multimodal Forensics · ", "bold white"),
+            (f"{modality} FORENSICS\n", f"bold {'cyan' if modality=='IMAGE' else ('magenta' if modality=='AUDIO' else 'yellow')}"),
+            (f"Status: {status_icon} {verdict}   ", f"bold {status_color}"),
+            (f"· AI Involvement: {ai_pct:.1f}%   ", "bold white"),
+            (f"· Confidence: {conf*100:.1f}%\n", "bold cyan"),
+            (f"Forensic Assessment: {explanation}", "dim italic white"),
+        ),
+        title=f"[bold {status_color}]{status_icon}  MULTIMODAL FORENSIC REPORT · {modality}[/bold {status_color}]",
+        border_style=status_color,
+        box=box.ROUNDED,
+        padding=(1, 2),
+    )
+    console.print(banner)
+
+    summary_table = Table(
+        box=box.SIMPLE,
+        show_header=True,
+        header_style="bold cyan",
+        expand=True,
+    )
+    summary_table.add_column("Parameter", style="bold white", width=25)
+    summary_table.add_column("Forensic Value", style="bold yellow")
+
+    mod_color = "cyan" if modality == "IMAGE" else ("magenta" if modality == "AUDIO" else "yellow")
+    comp_color = "red" if is_tampered else "green"
+    summary_table.add_row("Modality Processed", f"[{mod_color} bold]{modality}[/{mod_color} bold]")
+    summary_table.add_row("Exact Spliced/AI Component", f"[{comp_color} bold]{ai_component}[/{comp_color} bold]")
+    summary_table.add_row("Authenticity Verdict", f"[{status_color} bold]{verdict}[/{status_color} bold]")
+    summary_table.add_row("Input Media File", str(file_path.name))
+    console.print(summary_table)
+
+    if modality == "IMAGE" and items:
+        coord_table = Table(
+            title="[bold red]🎯  Localized Tampering Coordinates[/bold red]",
+            box=box.ROUNDED,
+            border_style="bold red",
+            header_style="bold red",
+            expand=True,
+            show_lines=True,
+        )
+        coord_table.add_column("Region", style="bold yellow", no_wrap=True)
+        coord_table.add_column("Confidence", justify="right", style="bold white", no_wrap=True)
+        coord_table.add_column("Bounding Box (ymin, xmin, ymax, xmax)", justify="center", style="cyan", no_wrap=True)
+        coord_table.add_column("Anomaly Details", style="white")
+
+        for r in items:
+            lbl = r.get("label") or r.get("region_label", "tampered_region")
+            r_conf = float(r.get("confidence", 0.0))
+            box_2d = r.get("box_2d", [0, 0, 0, 0])
+            reason = r.get("forensic_reasoning", "Localized anomaly.")
+            coord_table.add_row(
+                str(lbl),
+                f"{r_conf * 100:.1f}%",
+                f"[{box_2d[0]}, {box_2d[1]}, {box_2d[2]}, {box_2d[3]}]",
+                str(reason),
+            )
+        console.print(coord_table)
+
+    elif modality == "AUDIO" and items:
+        aud_table = Table(
+            title="[bold magenta]⏱️  Spliced Audio & Voice Clone Timestamps[/bold magenta]",
+            box=box.ROUNDED,
+            border_style="bold magenta",
+            header_style="bold magenta",
+            expand=True,
+            show_lines=True,
+        )
+        aud_table.add_column("Segment Type", style="bold yellow", no_wrap=True)
+        aud_table.add_column("Confidence", justify="right", style="bold white", no_wrap=True)
+        aud_table.add_column("Start Time (s)", justify="center", style="cyan", no_wrap=True)
+        aud_table.add_column("End Time (s)", justify="center", style="cyan", no_wrap=True)
+        aud_table.add_column("Duration (s)", justify="right", style="bold white", no_wrap=True)
+        aud_table.add_column("Forensic Reasoning", style="white")
+
+        for s in items:
+            s_type = s.get("type", "voice_clone")
+            s_conf = float(s.get("confidence", 0.0))
+            s_start = float(s.get("start_sec", 0.0))
+            s_end = float(s.get("end_sec", 0.0))
+            s_dur = max(0.0, s_end - s_start)
+            reason = s.get("reasoning", "Acoustic anomaly detected.")
+            aud_table.add_row(
+                str(s_type),
+                f"{s_conf * 100:.1f}%",
+                f"{s_start:.2f}s",
+                f"{s_end:.2f}s",
+                f"{s_dur:.2f}s",
+                str(reason),
+            )
+        console.print(aud_table)
+
+    elif modality == "VIDEO" and items:
+        vid_table = Table(
+            title="[bold yellow]🎬  Manipulated Deepfake Frame Intervals[/bold yellow]",
+            box=box.ROUNDED,
+            border_style="bold yellow",
+            header_style="bold yellow",
+            expand=True,
+            show_lines=True,
+        )
+        vid_table.add_column("Anomaly Type", style="bold yellow", no_wrap=True)
+        vid_table.add_column("Confidence", justify="right", style="bold white", no_wrap=True)
+        vid_table.add_column("Frame Range", justify="center", style="cyan", no_wrap=True)
+        vid_table.add_column("Bounding Box (ymin, xmin, ymax, xmax)", justify="center", style="dim cyan", no_wrap=True)
+        vid_table.add_column("Anomaly Details", style="white")
+
+        for m in items:
+            m_anom = m.get("anomaly", "face_swap_boundary_mismatch")
+            m_conf = float(m.get("confidence", 0.0))
+            f_start = m.get("frame_start", 0)
+            f_end = m.get("frame_end", 0)
+            b_box = m.get("box_2d", [0, 0, 0, 0])
+            b_str = f"[{b_box[0]}, {b_box[1]}, {b_box[2]}, {b_box[3]}]"
+            vid_table.add_row(
+                str(m_anom),
+                f"{m_conf * 100:.1f}%",
+                f"Frames {f_start} - {f_end}",
+                b_str,
+                "Boundary chromaticity mismatch / motion discontinuity.",
+            )
+        console.print(vid_table)
+
+    if evidence_path:
+        ev_p = Path(evidence_path).resolve()
+        console.print(
+            Padding(
+                Text.assemble(
+                    ("🖼️  Visual Forensic Evidence Proof: ", "bold cyan"),
+                    (ev_p.as_uri(), "bold underline green"),
+                    (f"\n   Local Path: {str(ev_p)}", "dim white"),
+                ),
+                (1, 0, 0, 1),
+            )
+        )
+
 
 def evaluate_media_file(
     file_path: Path,
@@ -276,103 +442,45 @@ def evaluate_media_file(
     text_caption: str | None = None,
 ) -> None:
     """
-    Send media file to the SafeSight API or fallback engine and display results.
+    Evaluate media file through SafeSight AI Multimodal Forensics Suite and API.
     """
-    suffix = file_path.suffix.lower()
-    mime_type = MIME_MAP.get(suffix, "application/octet-stream")
-
-    # Determine multipart form field key based on file format
-    if suffix in AUDIO_EXTS:
-        field_key = "audio"
-    elif suffix in VIDEO_EXTS:
-        field_key = "video"
-    else:
-        field_key = "image"
-
     try:
-        file_bytes = file_path.read_bytes()
+        # 1. Run local Multimodal Forensic Suite
+        with Status(
+            f"[bold cyan]🔍 Evaluating [magenta]{file_path.name}[/magenta] through Multimodal Forensic Engine...[/bold cyan]",
+            console=console,
+            spinner="dots",
+        ):
+            forensic_res = run_multimodal_forensics(file_path=file_path, text_context=text_caption)
+
+        # 2. Render dedicated Multimodal Forensics Card
+        display_multimodal_forensics_card(forensic_res, file_path)
+
     except Exception as exc:
-        console.print(f"[bold red]❌ Failed to read file:[/bold red] {exc}")
-        return
+        console.print(f"[bold red]❌ Forensic analysis error:[/bold red] {exc}")
 
-    # Check if backend is alive; if offline, attempt auto-bootstrap or offer fallback
-    backend_live = is_backend_online(DEFAULT_API_HOST, DEFAULT_API_PORT)
+    # 3. If caption is provided or backend is active, also check moderation API
+    if text_caption or is_backend_online(DEFAULT_API_HOST, DEFAULT_API_PORT):
+        backend_live = is_backend_online(DEFAULT_API_HOST, DEFAULT_API_PORT)
+        result_data = None
+        suffix = file_path.suffix.lower()
+        mime_type = MIME_MAP.get(suffix, "application/octet-stream")
+        field_key = "audio" if suffix in AUDIO_EXTS else ("video" if suffix in VIDEO_EXTS else "image")
 
-    if not backend_live:
-        console.print("[dim yellow]ℹ Backend offline. Checking auto-bootstrapper...[/dim yellow]")
-        backend_live = ensure_backend(
-            host=DEFAULT_API_HOST,
-            port=DEFAULT_API_PORT,
-            console=console,
-            max_retries=6,
-            poll_interval=0.5,
-        )
+        if backend_live:
+            try:
+                import httpx as http_client
+                with Status("[dim cyan]Syncing with content moderation gate...[/dim cyan]", console=console, spinner="dots"):
+                    files = {field_key: (file_path.name, file_path.read_bytes(), mime_type)}
+                    data_form = {"text": text_caption} if text_caption else {}
+                    r = http_client.post(target_url, data=data_form, files=files, timeout=60.0)
+                    if r.status_code == 200:
+                        result_data = r.json()
+            except Exception:
+                pass
 
-    result_data: dict[str, Any] | None = None
-
-    if backend_live:
-        # ── Live API Call with Rich Spinner ──────────────────────────────────
-        try:
-            import httpx as http_client
-        except ImportError:
-            import requests as http_client  # type: ignore
-
-        candidate_endpoints = [
-            target_url,
-            target_url.rstrip("/") + "/multimodal",
-            f"http://{DEFAULT_API_HOST}:{DEFAULT_API_PORT}/api/v1/moderate/multimodal",
-        ]
-
-        with Status(
-            f"[bold cyan]🔍 Evaluating [magenta]{file_path.name}[/magenta] through AI Forensics Engine...[/bold cyan]",
-            console=console,
-            spinner="dots",
-        ):
-            form_data = {}
-            if text_caption:
-                form_data["text"] = text_caption
-
-            files = {field_key: (file_path.name, file_bytes, mime_type)}
-
-            for endpoint in candidate_endpoints:
-                try:
-                    resp = http_client.post(
-                        endpoint,
-                        data=form_data,
-                        files=files,
-                        timeout=180.0,
-                    )
-                    if resp.status_code == 200:
-                        result_data = resp.json()
-                        break
-                    elif resp.status_code in (404, 405):
-                        continue
-                    else:
-                        console.print(f"[bold red]❌ API returned HTTP {resp.status_code}:[/bold red] {resp.text[:300]}")
-                        return
-                except Exception:
-                    continue
-
-        if result_data is None:
-            console.print("[yellow]⚠ Live endpoints unresponsive. Falling back to local deterministic engine...[/yellow]")
-            result_data = _execute_mock_request(text=text_caption, file_path=str(file_path))
-    else:
-        # Graceful fallback to deterministic mock engine
-        console.print("[dim cyan]ℹ Using local deterministic forensics engine (offline mode)...[/dim cyan]")
-        with Status(
-            f"[bold cyan]🔍 Analyzing [magenta]{file_path.name}[/magenta] with local forensics...[/bold cyan]",
-            console=console,
-            spinner="dots",
-        ):
-            result_data = _execute_mock_request(text=text_caption, file_path=str(file_path))
-
-    # Render dashboard
-    if result_data:
-        display_result(
-            data=result_data,
-            input_text=text_caption,
-            input_file=str(file_path),
-        )
+        if result_data and text_caption:
+            display_result(data=result_data, input_text=text_caption, input_file=str(file_path))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
